@@ -1,0 +1,82 @@
+# Instalar librerías (si es necesario)
+!pip install pandas numpy statsmodels scikit-learn
+
+# Importar librerías
+import pandas as pd
+import numpy as np
+import statsmodels.api as sm
+from statsmodels.formula.api import ols
+from sklearn.ensemble import RandomForestRegressor
+from google.colab import drive
+
+# 1. Montar Google Drive
+drive.mount('/content/drive')
+
+# 2. Cargar bases de datos (ajustar rutas)
+path_predial = '/content/drive/MyDrive/tu_carpeta/predial_jalisco.csv'
+path_nominas = '/content/drive/MyDrive/tu_carpeta/nominas_jalisco.csv'
+path_variables = '/content/drive/MyDrive/tu_carpeta/variables_municipales.csv'
+
+# Cargar datos
+df_predial = pd.read_csv(path_predial)
+df_nominas = pd.read_csv(path_nominas)
+df_variables = pd.read_csv(path_variables)
+
+# 3. Fusionar datos
+df_full_predial = pd.merge(df_predial, df_variables, on='municipio')
+df_full_nominas = pd.merge(df_nominas, df_variables, on='municipio')
+
+# 4. Preprocesamiento
+# Convertir variables a logaritmos (si es necesario)
+df_full_predial['log_valor_catastral'] = np.log(df_full_predial['valor_catastral'])
+df_full_nominas['log_salario_promedio'] = np.log(df_full_nominas['salario_promedio'])
+
+# 5. Modelo para Predial (Regresión Lineal)
+modelo_predial = ols('''recaudacion_predial ~ log_valor_catastral 
+                       + gasto_construccion 
+                       + densidad_urbana 
+                       + porcentaje_estrato_alto''', 
+                    data=df_full_predial).fit()
+
+print(modelo_predial.summary())
+
+# 6. Modelo para Nóminas (Random Forest)
+X_nominas = df_full_nominas[['trabajadores_formales', 
+                            'log_salario_promedio', 
+                            'densidad_empresarial']]
+y_nominas = df_full_nominas['recaudacion_nominas']
+
+rf_model = RandomForestRegressor(n_estimators=100)
+rf_model.fit(X_nominas, y_nominas)
+
+# Importancia de variables
+feature_importance = pd.DataFrame({
+    'Variable': X_nominas.columns,
+    'Importancia': rf_model.feature_importances_
+}).sort_values('Importancia', ascending=False)
+
+print("\nImportancia de variables para nóminas:")
+print(feature_importance)
+
+# 7. Calcular potencial recaudatorio
+# Para Predial
+df_full_predial['prediccion_predial'] = modelo_predial.predict()
+df_full_predial['brecha_predial'] = df_full_predial['prediccion_predial'] - df_full_predial['recaudacion_predial']
+
+# Para Nóminas
+df_full_nominas['prediccion_nominas'] = rf_model.predict(X_nominas)
+df_full_nominas['brecha_nominas'] = df_full_nominas['prediccion_nominas'] - df_full_nominas['recaudacion_nominas']
+
+# 8. Visualizar resultados
+import matplotlib.pyplot as plt
+
+# Gráfico de brechas prediales
+plt.figure(figsize=(10, 6))
+plt.barh(df_full_predial['municipio'], df_full_predial['brecha_predial'])
+plt.title('Brecha Recaudatoria - Impuesto Predial')
+plt.xlabel('Millones de MXN')
+plt.show()
+
+# Guardar resultados
+df_full_predial.to_csv('/content/drive/MyDrive/tu_carpeta/resultados_predial.csv', index=False)
+df_full_nominas.to_csv('/content/drive/MyDrive/tu_carpeta/resultados_nominas.csv', index=False)
